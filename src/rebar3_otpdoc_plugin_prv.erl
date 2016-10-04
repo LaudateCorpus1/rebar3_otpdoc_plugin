@@ -25,9 +25,17 @@ init(State) ->
 
 -spec do(rebar_state:t()) -> {ok, rebar_state:t()} | {error, string()}.
 do(State) ->
-    erlang:display(rebar_state:project_apps(State)),
+    _R = [make_otpdoc(App) || App <- rebar_state:project_apps(State)],
+    erlang:display(_R),
     {ok, State}.
 
 -spec format_error(any()) ->  iolist().
 format_error(Reason) ->
     io_lib:format("~p", [Reason]).
+
+%%%-----------------------------------------------------------------
+make_otpdoc(App) ->
+    OutDir = rebar_app_info:out_dir(App),
+    DocSrc = filename:join([rebar_app_info:dir(App),"doc","src"]),
+    XmlFiles = filelib:wildcard(filename:join(DocSrc,"*.xml")),
+    {App,XmlFiles}.
