@@ -43,7 +43,7 @@ make_otpdoc(AppInfo) ->
     io:format("Opts: ~p~n", [OtpOpts]),
 
     %% convert edoc modules to xml-files
-    Modules = proplists:get_value(edoc_modules, OtpOpts),
+    Modules = proplists:get_value(edoc_modules, OtpOpts, []),
     _ = [edoc_module_to_xml(filename:join(["src",Mod])++".erl", []) || Mod <- Modules],
 
     %% convert .xmlsrc-files to include code examples
