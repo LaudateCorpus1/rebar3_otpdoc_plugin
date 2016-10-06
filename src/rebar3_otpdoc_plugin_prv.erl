@@ -41,8 +41,21 @@ make_otpdoc(AppInfo) ->
     OutDir = rebar_app_info:out_dir(AppInfo),
     DocSrc = filename:join([rebar_app_info:dir(AppInfo),"doc","src"]),
     io:format("Opts: ~p~n", [OtpOpts]),
+
+    %% convert edoc modules to xml-files
     Modules = proplists:get_value(edoc_modules, OtpOpts),
     _ = [edoc_module_to_xml(filename:join(["src",Mod])++".erl", []) || Mod <- Modules],
+
+    %% convert .xmlsrc-files to include code examples
+    XmlSrcFiles = filelib:wildcard(filename:join(DocSrc,"*.xmlsrc")),
+    [begin
+         XmlDir = filename:dirname(XmlSrcFile),
+         Filename = filename:rootname(filename:basename(XmlSrcFile)),
+         XmlFileOut = filename:join([XmlDir,Filename]) ++ ".xml",
+         ok = xml_codeline_preprocessing(XmlSrcFile, XmlFileOut)
+     end || XmlSrcFile <- XmlSrcFiles],
+
+    %% find xml-files
     XmlFiles = filelib:wildcard(filename:join(DocSrc,"*.xml")),
     Details = rebar_app_info:app_details(AppInfo),
     io:format("Details: ~p~n", [Details]),
@@ -86,6 +99,48 @@ edoc_users_guide_to_xml(File,_Opts0) ->
 	    io:format("~s: not a regular file\n", [File]),
 	    error
     end.
+
+%% include code examples
+
+-define(match_codeinclude,
+       "<codeinclude(?:\040|\t)*file=\"([^\"]*)\"(?:(?:(?:\040|\t)*tag=\"([^\"]*)\".*)|(?:.*))(?:/>|/codeinclude>)").
+xml_codeline_preprocessing(InFile, OutFile) ->
+    {ok, InFd} = file:open(InFile, [read]),
+    Path = filename:dirname(InFile),
+    {ok, OutFd} = file:open(OutFile, [write]),
+    {ok, MP} = re:compile(?match_codeinclude),
+    ok = xml_codeline_parse(InFd, OutFd, Path, MP),
+    file:close(OutFd),
+    file:close(InFd),
+    ok.
+
+xml_codeline_parse(InDev, OutDev, Path, Mp) ->
+    case io:get_line(InDev, "") of
+        eof ->
+            ok;
+        String ->
+            case re:run(String, Mp,[{capture, [1,2], list}]) of
+                {match,[File, []]} ->
+                    {ok,Bin} = file:read_file(filename:join(Path, File)),
+                    file:write(OutDev, "<code>\n<![CDATA[\n"),
+                    file:write(OutDev, Bin),
+                    file:write(OutDev, "]]></code>");
+                {match,[File, Tag]} ->
+                    String2 = xml_codeline_get_code(filename:join(Path, File), Tag),
+                    file:write(OutDev, "<code>\n<![CDATA[\n"),
+                    file:write(OutDev, String2),
+                    file:write(OutDev, "]]></code>");
+                _ ->
+                    file:write(OutDev, String)
+            end,
+            xml_codeline_parse(InDev, OutDev, Path, Mp)
+    end.
+
+xml_codeline_get_code(File, Tag) ->
+    {ok,Bin} = file:read_file(File),
+    {match, [[Match]]} = re:run(Bin,"^" ++ Tag ++ "\n((.|\n)*)\n" ++ Tag ++ "\$",
+                                [global, multiline, {capture, [1], binary}]),
+    Match.
 
 %% Ex. "October  6, 2016"
 datestring() -> datestring(erlang:date()).
