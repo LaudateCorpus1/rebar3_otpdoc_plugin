@@ -1,5 +1,7 @@
 -module(rebar3_otpdoc_plugin_prv).
 
+-import(lists, [foreach/2]).
+
 -export([init/1, do/1, format_error/1]).
 
 -define(PROVIDER, otpdoc).
@@ -44,16 +46,18 @@ make_otpdoc(AppInfo) ->
 
     %% convert edoc modules to xml-files
     Modules = proplists:get_value(edoc_modules, OtpOpts, []),
-    _ = [edoc_module_to_xml(filename:join(["src",Mod])++".erl", []) || Mod <- Modules],
+    foreach(fun (Mod) ->
+                    edoc_module_to_xml(filename:join(["src",Mod])++".erl", [])
+            end, Modules),
 
     %% convert .xmlsrc-files to include code examples
     XmlSrcFiles = filelib:wildcard(filename:join(DocSrc,"*.xmlsrc")),
-    [begin
-         XmlDir = filename:dirname(XmlSrcFile),
-         Filename = filename:rootname(filename:basename(XmlSrcFile)),
-         XmlFileOut = filename:join([XmlDir,Filename]) ++ ".xml",
-         ok = xml_codeline_preprocessing(XmlSrcFile, XmlFileOut)
-     end || XmlSrcFile <- XmlSrcFiles],
+    foreach(fun (XmlSrcFile) ->
+                    XmlDir = filename:dirname(XmlSrcFile),
+                    Filename = filename:rootname(filename:basename(XmlSrcFile)),
+                    XmlFileOut = filename:join([XmlDir,Filename]) ++ ".xml",
+                    ok = xml_codeline_preprocessing(XmlSrcFile, XmlFileOut)
+            end, XmlSrcFiles),
 
     %% find xml-files
     XmlFiles = filelib:wildcard(filename:join(DocSrc,"*.xml")),
@@ -101,8 +105,6 @@ edoc_users_guide_to_xml(File,_Opts0) ->
 	    error
     end.
 
-
-
 make_html_doc(Name) ->
     ok = install_html_boilerplate(),
     Date = datestring(),
@@ -135,16 +137,14 @@ install_html_boilerplate() ->
              "js/flipmenu/flip_static.gif",
              "css/otp_doc.css",
              "images/erlang-logo.png"],
-    lists:foreach(fun(File) ->
-                          Src = filename:join(Path,File),
-                          Dst = filename:join(["doc/html/doc",File]),
-                          ok = filelib:ensure_dir(Dst),
-                          io:format("copy: ~ts -> ~ts~n", [Src,Dst]),
-                          {ok,_} = file:copy(Src,Dst)
-                  end, Files),
+    foreach(fun (File) ->
+                    Src = filename:join(Path,File),
+                    Dst = filename:join(["doc/html/doc",File]),
+                    ok = filelib:ensure_dir(Dst),
+                    io:format("copy: ~ts -> ~ts~n", [Src,Dst]),
+                    {ok,_} = file:copy(Src,Dst)
+            end, Files),
     ok.
-
-
 
 %% include code examples
 
