@@ -86,3 +86,24 @@ edoc_users_guide_to_xml(File,_Opts0) ->
 	    io:format("~s: not a regular file\n", [File]),
 	    error
     end.
+
+%% Ex. "October  6, 2016"
+datestring() -> datestring(erlang:date()).
+datestring({Y,M,D}) ->
+    monthstring(M) ++ " " ++ integer_to_list(D) ++ ", " ++ integer_to_list(Y).
+
+monthstring(M) ->
+    case M of
+        1 -> "January";
+        2 -> "February";
+        3 -> "March";
+        4 -> "April";
+        5 -> "May";
+        6 -> "June";
+        7 -> "July";
+        8 -> "August";
+        9 -> "September";
+        10 -> "October";
+        11 -> "November";
+        12 -> "December"
+    end.
