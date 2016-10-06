@@ -60,6 +60,7 @@ make_otpdoc(AppInfo) ->
     Details = rebar_app_info:app_details(AppInfo),
     io:format("Details: ~p~n", [Details]),
     io:format("XmlFiles: ~p~n", [XmlFiles]),
+    ok = make_html_doc(rebar_app_info:name(AppInfo)),
     {Details,XmlFiles}.
 
 edoc_module_to_xml(File,_Opts0) ->
@@ -99,6 +100,51 @@ edoc_users_guide_to_xml(File,_Opts0) ->
 	    io:format("~s: not a regular file\n", [File]),
 	    error
     end.
+
+
+
+make_html_doc(Name) ->
+    ok = install_html_boilerplate(),
+    Date = datestring(),
+    Args = ["--noout",
+            "--stringparam", "outdir", "doc/html",
+            "--stringparam", "docgen", "/ldisk/egil/git/otp/lib/erl_docgen",
+            "--stringparam", "topdocdir", "doc",
+            "--stringparam", "pdfdir", "doc/pdf",
+            "--xinclude",
+            "--stringparam", "gendate", Date,
+            "--stringparam", "appname", binary_to_list(Name),
+            "--stringparam", "appver", "0.9",
+            "--stringparam", "extra_front_page_info", "\"\"",
+            "--stringparam", "stylesheet", "css/otp_doc.css",
+            "--stringparam", "winprefix", "Erlang",
+            "--stringparam", "logo", "images/erlang-logo.png",
+            "--stringparam", "pdfname", "\"\"",
+            "-path", "/ldisk/egil/git/otp/lib/erl_docgen/priv/dtd",
+            "-path", "/ldisk/egil/git/otp/lib/erl_docgen/priv/dtd_html_entities",
+            "/ldisk/egil/git/otp/lib/erl_docgen/priv/xsl/db_html.xsl",
+            "doc/src/book.xml"],
+    {0,_} = rebar3_otpdoc_system:run("xsltproc", Args),
+    ok.
+
+install_html_boilerplate() ->
+    Path = code:priv_dir(erl_docgen),
+    Files = ["js/flipmenu/flipmenu.js",
+             "js/flipmenu/flip_closed.gif",
+             "js/flipmenu/flip_open.gif",
+             "js/flipmenu/flip_static.gif",
+             "css/otp_doc.css",
+             "images/erlang-logo.png"],
+    lists:foreach(fun(File) ->
+                          Src = filename:join(Path,File),
+                          Dst = filename:join(["doc/html/doc",File]),
+                          ok = filelib:ensure_dir(Dst),
+                          io:format("copy: ~ts -> ~ts~n", [Src,Dst]),
+                          {ok,_} = file:copy(Src,Dst)
+                  end, Files),
+    ok.
+
+
 
 %% include code examples
 
