@@ -28,16 +28,16 @@ init(State) ->
 -spec do(rebar_state:t()) -> {ok, rebar_state:t()} | {error, string()}.
 do(State) ->
     foreach(fun(AppInfo) ->
-                    make_otpdoc(AppInfo, rebar_state:resources(State))
+                    make_doc_otp(AppInfo, rebar_state:resources(State))
             end, rebar_state:project_apps(State)),
     {ok, State}.
 
--spec format_error(any()) ->  iolist().
+-spec format_error(any()) -> iolist().
 format_error(Reason) ->
     io_lib:format("~p", [Reason]).
 
 %%%-----------------------------------------------------------------
-make_otpdoc(AppInfo, Resources) ->
+make_doc_otp(AppInfo, Resources) ->
     Opts = rebar_app_info:opts(AppInfo),
     OtpOpts = proplists:unfold(rebar_opts:get(Opts, otpdoc_opts, [])),
     OutDir = rebar_app_info:out_dir(AppInfo),
@@ -46,14 +46,13 @@ make_otpdoc(AppInfo, Resources) ->
     io:format("OutDir: ~p~n", [OutDir]),
 
     %% convert edoc modules to xml-files
-    Modules = proplists:get_value(edoc_modules, OtpOpts, []),
+    EdocMods = proplists:get_value(edoc_modules, OtpOpts, []),
     foreach(fun (Mod) ->
                     edoc_module_to_xml(filename:join(["src",Mod])++".erl", [])
-            end, Modules),
+            end, EdocMods),
 
     %% convert .xmlsrc-files to include code examples
-    XmlSrcFiles = filelib:wildcard(filename:join(DocSrc,"*.xmlsrc")),
-    io:format("XmlSrcFiles: ~p~n", [XmlSrcFiles]),
+    XmlSrcFiles = filelib:wildcard(filename:join(DocSrc, "*.xmlsrc")),
     foreach(fun (XmlSrcFile) ->
                     XmlDir = filename:dirname(XmlSrcFile),
                     Filename = filename:rootname(filename:basename(XmlSrcFile)),
@@ -61,7 +60,11 @@ make_otpdoc(AppInfo, Resources) ->
                     ok = xml_codeline_preprocessing(XmlSrcFile, XmlFileOut)
             end, XmlSrcFiles),
 
-    Ctx = #{ vsn => rebar_utils:vcs_vsn(rebar_app_info:original_vsn(AppInfo),
+    %% find defined man-pages
+    ManMods = proplists:get_value(manpages, OtpOpts, []),
+
+    Ctx = #{ name => rebar_app_info:name(AppInfo),
+             vsn => rebar_utils:vcs_vsn(rebar_app_info:original_vsn(AppInfo),
                                         rebar_app_info:dir(AppInfo),
                                         Resources),
              date => datestring(),
@@ -69,7 +72,8 @@ make_otpdoc(AppInfo, Resources) ->
              erl_docgen => code:priv_dir(erl_docgen) },
 
     %% find xml-files
-    ok = make_html_doc(rebar_app_info:name(AppInfo), Ctx),
+    ok = make_doc_html(Ctx),
+    ok = make_doc_man(ManMods, Ctx),
     ok.
 
 edoc_module_to_xml(File,_Opts0) ->
@@ -110,7 +114,7 @@ edoc_users_guide_to_xml(File,_Opts0) ->
 	    error
     end.
 
-make_html_doc(Name, #{erl_docgen := Priv} = Ctx) ->
+make_doc_html(#{name := Name, erl_docgen := Priv} = Ctx) ->
     install_html_boilerplate(Ctx),
     Args = ["--noout",
             "--stringparam", "outdir", "doc/html",
@@ -131,6 +135,28 @@ make_html_doc(Name, #{erl_docgen := Priv} = Ctx) ->
             filename:join([Priv, "xsl", "db_html.xsl"]),
             "doc/src/book.xml"],
     {0,_} = rebar3_otpdoc_system:run("xsltproc", Args),
+    ok.
+
+make_doc_man(Mans, #{name := Name, erl_docgen := Priv} = Ctx) ->
+    Args0 = ["--stringparam", "company", "Ericsson AB",
+             "--stringparam", "docgen", Priv,
+             "--stringparam", "gendate", maps:get(date, Ctx),
+             "--stringparam", "appname", Name,
+             "--stringparam", "appver", maps:get(vsn, Ctx),
+             "--xinclude",
+             "-path", filename:join([Priv, "dtd"]),
+             "-path", filename:join([Priv, "dtd_man_entities"]),
+             filename:join([Priv, "xsl", "db_man.xsl"])],
+
+    ManFile = fun ({man3, Mod}) -> filename:join(["man3", atom_to_list(Mod) ++ ".3"]);
+                  ({man6, Mod}) -> filename:join(["man6", atom_to_list(Mod) ++ ".6"])
+              end,
+
+    foreach(fun ({_,Mod}=Man) ->
+                    Args = ["--output", filename:join(["doc", ManFile(Man)])] ++ Args0
+                    ++ [filename:join(["doc", "src", atom_to_list(Mod) ++ ".xml"])],
+                    {0,_} = rebar3_otpdoc_system:run("xsltproc", Args)
+            end, Mans),
     ok.
 
 install_html_boilerplate(#{erl_docgen := Path}) ->
