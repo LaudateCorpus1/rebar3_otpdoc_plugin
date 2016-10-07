@@ -27,7 +27,9 @@ init(State) ->
 
 -spec do(rebar_state:t()) -> {ok, rebar_state:t()} | {error, string()}.
 do(State) ->
-    [make_otpdoc(AppInfo) || AppInfo <- rebar_state:project_apps(State)],
+    foreach(fun(AppInfo) ->
+                    make_otpdoc(AppInfo, rebar_state:resources(State))
+            end, rebar_state:project_apps(State)),
     {ok, State}.
 
 -spec format_error(any()) ->  iolist().
@@ -35,14 +37,13 @@ format_error(Reason) ->
     io_lib:format("~p", [Reason]).
 
 %%%-----------------------------------------------------------------
-make_otpdoc(AppInfo) ->
-    io:format("~p~n", [rebar_app_info:name(AppInfo)]),
+make_otpdoc(AppInfo, Resources) ->
     Opts = rebar_app_info:opts(AppInfo),
     OtpOpts = proplists:unfold(rebar_opts:get(Opts, otpdoc_opts, [])),
-    %/ldisk/egil/git/otp/lib/erl_docgen/priv/bin/xml_from_edoc.escript
     OutDir = rebar_app_info:out_dir(AppInfo),
     DocSrc = filename:join([rebar_app_info:dir(AppInfo),"doc","src"]),
     io:format("Opts: ~p~n", [OtpOpts]),
+    io:format("OutDir: ~p~n", [OutDir]),
 
     %% convert edoc modules to xml-files
     Modules = proplists:get_value(edoc_modules, OtpOpts, []),
@@ -52,6 +53,7 @@ make_otpdoc(AppInfo) ->
 
     %% convert .xmlsrc-files to include code examples
     XmlSrcFiles = filelib:wildcard(filename:join(DocSrc,"*.xmlsrc")),
+    io:format("XmlSrcFiles: ~p~n", [XmlSrcFiles]),
     foreach(fun (XmlSrcFile) ->
                     XmlDir = filename:dirname(XmlSrcFile),
                     Filename = filename:rootname(filename:basename(XmlSrcFile)),
@@ -59,13 +61,16 @@ make_otpdoc(AppInfo) ->
                     ok = xml_codeline_preprocessing(XmlSrcFile, XmlFileOut)
             end, XmlSrcFiles),
 
+    Ctx = #{ vsn => rebar_utils:vcs_vsn(rebar_app_info:original_vsn(AppInfo),
+                                        rebar_app_info:dir(AppInfo),
+                                        Resources),
+             date => datestring(),
+             dir => OutDir,
+             erl_docgen => code:priv_dir(erl_docgen) },
+
     %% find xml-files
-    XmlFiles = filelib:wildcard(filename:join(DocSrc,"*.xml")),
-    Details = rebar_app_info:app_details(AppInfo),
-    io:format("Details: ~p~n", [Details]),
-    io:format("XmlFiles: ~p~n", [XmlFiles]),
-    ok = make_html_doc(rebar_app_info:name(AppInfo)),
-    {Details,XmlFiles}.
+    ok = make_html_doc(rebar_app_info:name(AppInfo), Ctx),
+    ok.
 
 edoc_module_to_xml(File,_Opts0) ->
     case filelib:is_regular(File) of
@@ -105,32 +110,30 @@ edoc_users_guide_to_xml(File,_Opts0) ->
 	    error
     end.
 
-make_html_doc(Name) ->
-    ok = install_html_boilerplate(),
-    Date = datestring(),
+make_html_doc(Name, #{erl_docgen := Priv} = Ctx) ->
+    install_html_boilerplate(Ctx),
     Args = ["--noout",
             "--stringparam", "outdir", "doc/html",
             "--stringparam", "docgen", "/ldisk/egil/git/otp/lib/erl_docgen",
             "--stringparam", "topdocdir", "doc",
             "--stringparam", "pdfdir", "doc/pdf",
             "--xinclude",
-            "--stringparam", "gendate", Date,
-            "--stringparam", "appname", binary_to_list(Name),
-            "--stringparam", "appver", "0.9",
-            "--stringparam", "extra_front_page_info", "\"\"",
+            "--stringparam", "gendate", maps:get(date, Ctx),
+            "--stringparam", "appname", Name,
+            "--stringparam", "appver", maps:get(vsn, Ctx),
+            "--stringparam", "extra_front_page_info", maps:get(front_page_info, Ctx, ""),
             "--stringparam", "stylesheet", "css/otp_doc.css",
             "--stringparam", "winprefix", "Erlang",
             "--stringparam", "logo", "images/erlang-logo.png",
-            "--stringparam", "pdfname", "\"\"",
-            "-path", "/ldisk/egil/git/otp/lib/erl_docgen/priv/dtd",
-            "-path", "/ldisk/egil/git/otp/lib/erl_docgen/priv/dtd_html_entities",
-            "/ldisk/egil/git/otp/lib/erl_docgen/priv/xsl/db_html.xsl",
+            "--stringparam", "pdfname", maps:get(pdfname, Ctx, ""),
+            "-path", filename:join([Priv, "dtd"]),
+            "-path", filename:join([Priv, "dtd_html_entities"]),
+            filename:join([Priv, "xsl", "db_html.xsl"]),
             "doc/src/book.xml"],
     {0,_} = rebar3_otpdoc_system:run("xsltproc", Args),
     ok.
 
-install_html_boilerplate() ->
-    Path = code:priv_dir(erl_docgen),
+install_html_boilerplate(#{erl_docgen := Path}) ->
     Files = ["js/flipmenu/flipmenu.js",
              "js/flipmenu/flip_closed.gif",
              "js/flipmenu/flip_open.gif",
