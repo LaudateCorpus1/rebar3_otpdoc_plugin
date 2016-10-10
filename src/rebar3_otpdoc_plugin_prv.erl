@@ -61,7 +61,14 @@ make_doc_otp(AppInfo, Resources) ->
             end, XmlSrcFiles),
 
     %% find defined man-pages
-    ManMods = proplists:get_value(manpages, OtpOpts, []),
+    ManFiles = case proplists:get_value(manpages, OtpOpts) of
+                   undefined ->
+                       XmlFiles = filelib:wildcard(filename:join(DocSrc, "*.xml")),
+                       ManClass = [{classify_man_page(XmlFile), XmlFile} || XmlFile <- XmlFiles],
+                       [MF || MF = {Class, _} <- ManClass, Class =/= none];
+                   XmlFiles ->
+                       XmlFiles
+               end,
 
     %% find doc-images
     Images = case proplists:get_value(images, OtpOpts) of
@@ -84,7 +91,7 @@ make_doc_otp(AppInfo, Resources) ->
 
     %% find xml-files
     ok = make_doc_html(Ctx),
-    ok = make_doc_man(ManMods, Ctx),
+    ok = make_doc_man(ManFiles, Ctx),
     ok.
 
 edoc_module_to_xml(File,_Opts0) ->
@@ -149,7 +156,7 @@ make_doc_html(#{name := Name, erl_docgen := Priv} = Ctx) ->
     {0,_} = rebar3_otpdoc_system:run("xsltproc", Args),
     ok.
 
-make_doc_man(Mans, #{name := Name, erl_docgen := Priv} = Ctx) ->
+make_doc_man(ManFiles, #{name := Name, erl_docgen := Priv} = Ctx) ->
     Args0 = ["--stringparam", "company", "Ericsson AB",
              "--stringparam", "docgen", Priv,
              "--stringparam", "gendate", maps:get(date, Ctx),
@@ -160,15 +167,18 @@ make_doc_man(Mans, #{name := Name, erl_docgen := Priv} = Ctx) ->
              "-path", filename:join([Priv, "dtd_man_entities"]),
              filename:join([Priv, "xsl", "db_man.xsl"])],
 
-    ManFile = fun ({man3, Mod}) -> filename:join(["man3", atom_to_list(Mod) ++ ".3"]);
-                  ({man6, Mod}) -> filename:join(["man6", atom_to_list(Mod) ++ ".6"])
+    ManFile = fun ({Type, File}) ->
+                       RootBase = filename:rootname(filename:basename(File)),
+                       case Type of
+                           man3 -> filename:join(["man3", RootBase ++ ".3"]);
+                           man6 -> filename:join(["man6", RootBase ++ ".6"])
+                       end
               end,
 
-    foreach(fun ({_,Mod}=Man) ->
-                    Args = ["--output", filename:join(["doc", ManFile(Man)])] ++ Args0
-                    ++ [filename:join(["doc", "src", atom_to_list(Mod) ++ ".xml"])],
+    foreach(fun ({_,File}=MF) ->
+                    Args = ["--output", filename:join(["doc", ManFile(MF)])] ++ Args0 ++ [File],
                     {0,_} = rebar3_otpdoc_system:run("xsltproc", Args)
-            end, Mans),
+            end, ManFiles),
     ok.
 
 install_html_images(#{images := Files, doc_src := DocSrc}) ->
@@ -240,6 +250,28 @@ xml_codeline_get_code(File, Tag) ->
     {match, [[Match]]} = re:run(Bin,"^" ++ Tag ++ "\n((.|\n)*)\n" ++ Tag ++ "\$",
                                 [global, multiline, {capture, [1], binary}]),
     Match.
+
+%% "some/xml-file.xml" -> man3 | man6 | ..
+classify_man_page(XmlFile) ->
+    Event = fun({startDTD,Name,_,_}, _, S) ->
+                    case Name of
+                        "book"        -> S#{man_type := none};
+                        "chapter"     -> S#{man_type := man6};
+                        "comref"      -> S#{man_type := none};
+                        "cref"        -> S#{man_type := none};
+                        "fascicules"  -> S#{man_type := none};
+                        "erlref"      -> S#{man_type := man3};
+                        "part"        -> S#{man_type := none};
+                        "application" -> S#{man_type := none}
+                    end;
+               (_, _, S) ->
+                    S
+            end,
+    {ok, #{man_type := Type}, _} = xmerl_sax_parser:file(XmlFile, [skip_external_dtd,
+                                                                   {event_fun, Event},
+                                                                   {event_state,#{man_type => none}}]),
+    Type.
+
 
 %% Ex. "October  6, 2016"
 datestring() -> datestring(erlang:date()).
