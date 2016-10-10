@@ -63,10 +63,21 @@ make_doc_otp(AppInfo, Resources) ->
     %% find defined man-pages
     ManMods = proplists:get_value(manpages, OtpOpts, []),
 
+    %% find doc-images
+    Images = case proplists:get_value(images, OtpOpts) of
+                 undefined ->
+                     filelib:wildcard("**/*.{gif,jpeg,jpg,png}", DocSrc);
+                 Imgs ->
+                     Imgs
+             end,
+
+    %% set context
     Ctx = #{ name => rebar_app_info:name(AppInfo),
              vsn => rebar_utils:vcs_vsn(rebar_app_info:original_vsn(AppInfo),
                                         rebar_app_info:dir(AppInfo),
                                         Resources),
+             doc_src => DocSrc,
+             images => Images,
              date => datestring(),
              dir => OutDir,
              erl_docgen => code:priv_dir(erl_docgen) },
@@ -115,7 +126,8 @@ edoc_users_guide_to_xml(File,_Opts0) ->
     end.
 
 make_doc_html(#{name := Name, erl_docgen := Priv} = Ctx) ->
-    install_html_boilerplate(Ctx),
+    ok = install_html_boilerplate(Ctx),
+    ok = install_html_images(Ctx),
     Args = ["--noout",
             "--stringparam", "outdir", "doc/html",
             "--stringparam", "docgen", "/ldisk/egil/git/otp/lib/erl_docgen",
@@ -159,6 +171,14 @@ make_doc_man(Mans, #{name := Name, erl_docgen := Priv} = Ctx) ->
             end, Mans),
     ok.
 
+install_html_images(#{images := Files, doc_src := DocSrc}) ->
+    foreach(fun (File) ->
+                    Src = filename:join(DocSrc, File),
+                    Dst = filename:join(["doc/html", File]),
+                    ok = install_file(Src, Dst)
+            end, Files),
+    ok.
+
 install_html_boilerplate(#{erl_docgen := Path}) ->
     Files = ["js/flipmenu/flipmenu.js",
              "js/flipmenu/flip_closed.gif",
@@ -169,10 +189,14 @@ install_html_boilerplate(#{erl_docgen := Path}) ->
     foreach(fun (File) ->
                     Src = filename:join(Path,File),
                     Dst = filename:join(["doc/html/doc",File]),
-                    ok = filelib:ensure_dir(Dst),
-                    io:format("copy: ~ts -> ~ts~n", [Src,Dst]),
-                    {ok,_} = file:copy(Src,Dst)
+                    ok = install_file(Src, Dst)
             end, Files),
+    ok.
+
+install_file(Src, Dst) ->
+    ok = filelib:ensure_dir(Dst),
+    io:format("copy: ~ts -> ~ts~n", [Src,Dst]),
+    {ok,_} = file:copy(Src, Dst),
     ok.
 
 %% include code examples
