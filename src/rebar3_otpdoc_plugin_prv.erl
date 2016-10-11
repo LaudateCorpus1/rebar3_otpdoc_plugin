@@ -66,6 +66,14 @@ make_doc_otp(AppInfo, Resources) ->
                     ok = xml_codeline_preprocessing(XmlSrcFile, XmlFileOut)
             end, XmlSrcFiles),
 
+    %% generate specs
+    ErlFiles = filelib:wildcard("src/*.erl"),
+    HrlFiles = filelib:wildcard("{include,src}/*.hrl"),
+    io:format("erl-files: ~p~n", [ErlFiles]),
+    foreach(fun (ErlFile) ->
+                    edoc_specs_to_xml(ErlFile,HrlFiles)
+            end, ErlFiles),
+
     %% find defined man-pages
     ManFiles = case proplists:get_value(manpages, OtpOpts) of
                    undefined ->
@@ -93,6 +101,7 @@ make_doc_otp(AppInfo, Resources) ->
              vsn => rebar_utils:vcs_vsn(rebar_app_info:original_vsn(AppInfo),
                                         rebar_app_info:dir(AppInfo),
                                         Resources),
+             specs => filename:join([DocSrc,"specs.xml"]),
              doc_src => DocSrc,
              images => Images,
              date => datestring(),
@@ -143,6 +152,85 @@ edoc_users_guide_to_xml(File,_Opts0) ->
 	    error
     end.
 
+edoc_specs_to_xml(File, InclFs) ->
+    Dir = "doc/specs",
+    ReadOpts = [{includes, InclFs}, {preprocess, true}],
+    ExtractOpts = [{report_missing_type, false}],
+    LayoutOpts = [{pretty_printer, erl_pp},
+                  {layout, docgen_otp_specs}],
+    try
+        io:format("generate specs for ~ts (with ~p)~n", [File,InclFs]),
+        Fs = clauses(read_file(File, ReadOpts)),
+        Doc = extract(File, Fs, ExtractOpts),
+        Text = edoc:layout(Doc, LayoutOpts),
+        ok = write_text(Text, File, Dir),
+        rename(Dir, File)
+    catch
+        _:_ ->
+            io:format("EDoc could not process file '~s'\n", [File]),
+            clean_up(Dir)
+    end.
+
+read_file(File, Opts) ->
+    edoc:read_source(File, Opts).
+
+extract(File, Forms, Opts) ->
+    Env = edoc_lib:get_doc_env([], [], _Opts=[]),
+    {_Module, Doc} = edoc_extract:source(Forms, File, Env, Opts),
+    Doc.
+
+clauses(Fs) ->
+    clauses(Fs, no).
+
+clauses([], no) ->
+    [];
+clauses([F | Fs], Spec) ->
+    case F of
+        {attribute,_,spec,_} ->
+            clauses(Fs, F);
+        {function,_,_N,_A,_Cls} when Spec =/= no->
+            {attribute,_,spec,{Name,FunTypes}} = Spec,
+            %% [throw({no,Name,{_N,_A}}) || Name =/= {_N,_A}],
+            %% EDoc doesn't care if a function appears more than once;
+            %% this is how overloaded specs are handled:
+            (lists:append([[setelement(4, Spec, {Name,[T]}),F] ||
+                              T <- FunTypes])
+             ++ clauses(Fs, no));
+        _ ->
+            [F | clauses(Fs, Spec)]
+    end.
+
+write_text(Text, File, Dir) ->
+    Base = filename:basename(File, ".erl"),
+    OutFile = filename:join(Dir, Base) ++ ".specs",
+    ok = filelib:ensure_dir(OutFile),
+    case file:write_file(OutFile, Text) of
+        ok ->
+            ok;
+        {error, R} ->
+            R1 = file:format_error(R),
+            io:format("could not write file '~s': ~s\n", [File, R1])
+    end.
+
+rename(Dir, F) ->
+    Mod = filename:basename(F, ".erl"),
+    Old = filename:join(Dir, Mod ++ ".specs"),
+    New = filename:join(Dir, "specs_" ++ Mod ++ ".xml"),
+    case file:rename(Old, New) of
+        ok ->
+            ok;
+        {error, R} ->
+            R1 = file:format_error(R),
+            io:format("could not rename file '~s': ~s\n", [New, R1])
+    end.
+
+clean_up(Dir) ->
+    _ = [file:delete(filename:join(Dir, F)) ||
+            F <- ["packages-frame.html",
+                  "overview-summary.html",
+                  "modules-frame.html",
+                  "index.html", "erlang.png", "edoc-info"]],
+    ok.
 make_doc_html(#{name := Name, erl_docgen := Priv} = Ctx) ->
     ok = install_html_boilerplate(Ctx),
     ok = install_html_images(Ctx),
@@ -152,6 +240,8 @@ make_doc_html(#{name := Name, erl_docgen := Priv} = Ctx) ->
             "--stringparam", "topdocdir", "doc",
             "--stringparam", "pdfdir", "doc/pdf",
             "--xinclude",
+            "--stringparam", "specs_file", maps:get(specs, Ctx),
+
             "--stringparam", "gendate", maps:get(date, Ctx),
             "--stringparam", "appname", Name,
             "--stringparam", "appver", maps:get(vsn, Ctx),
@@ -164,6 +254,7 @@ make_doc_html(#{name := Name, erl_docgen := Priv} = Ctx) ->
             "-path", filename:join([Priv, "dtd_html_entities"]),
             filename:join([Priv, "xsl", "db_html.xsl"]),
             "doc/src/book.xml"],
+    io:format("xsltproc ~p~n", [Args]),
     {0,_} = rebar3_otpdoc_system:run("xsltproc", Args),
     ok.
 
@@ -265,11 +356,13 @@ xml_codeline_get_code(File, Tag) ->
 %% "some/xml-file.xml" -> man1 | man3 | man6 | none
 classify_man_page(XmlFile) ->
     Event = fun({startDTD,Name,_,_}, _, _) ->
+                    io:format("name: ~p~n", [Name]),
                     case Name of
                         "chapter"     -> man6;
                         "cref"        -> man3;
                         "erlref"      -> man3;
                         "comref"      -> man1;
+                        "appref"      -> none; %% ?
                         "application" -> none;
                         "fascicules"  -> none;
                         "part"        -> none;
