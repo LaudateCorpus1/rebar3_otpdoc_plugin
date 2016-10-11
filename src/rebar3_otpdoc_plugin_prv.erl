@@ -51,6 +51,12 @@ make_doc_otp(AppInfo, Resources) ->
                     edoc_module_to_xml(filename:join(["src",Mod])++".erl", [])
             end, EdocMods),
 
+    %% convert edoc chapters to xml-files
+    EdocChapters = proplists:get_value(edoc_chapters, OtpOpts, []),
+    foreach(fun (Chapter) ->
+                    edoc_users_guide_to_xml(Chapter,[])
+            end, EdocChapters),
+
     %% convert .xmlsrc-files to include code examples
     XmlSrcFiles = filelib:wildcard(filename:join(DocSrc, "*.xmlsrc")),
     foreach(fun (XmlSrcFile) ->
@@ -64,8 +70,12 @@ make_doc_otp(AppInfo, Resources) ->
     ManFiles = case proplists:get_value(manpages, OtpOpts) of
                    undefined ->
                        XmlFiles = filelib:wildcard(filename:join(DocSrc, "*.xml")),
-                       ManClass = [{classify_man_page(XmlFile), XmlFile} || XmlFile <- XmlFiles],
-                       [MF || MF = {Class, _} <- ManClass, Class =/= none];
+                       lists:foldl(fun(XmlFile, Acc) ->
+                                           case classify_man_page(XmlFile) of
+                                               none -> Acc;
+                                               Type -> [{Type,XmlFile}|Acc]
+                                           end
+                                   end, [], XmlFiles);
                    XmlFiles ->
                        XmlFiles
                end,
@@ -115,6 +125,7 @@ edoc_users_guide_to_xml(File,_Opts0) ->
     case filelib:is_regular(File) of
 	true ->
             Enc = epp:read_encoding(File, [{in_comment_only, false}]),
+            io:format("encoding: ~p~n", [Enc]),
             Encoding = [{encoding, Enc} || Enc =/= none],
 	    Opts = [{def,         []},
 		    {app_default, "OTPROOT"},
@@ -251,25 +262,25 @@ xml_codeline_get_code(File, Tag) ->
                                 [global, multiline, {capture, [1], binary}]),
     Match.
 
-%% "some/xml-file.xml" -> man3 | man6 | ..
+%% "some/xml-file.xml" -> man1 | man3 | man6 | none
 classify_man_page(XmlFile) ->
-    Event = fun({startDTD,Name,_,_}, _, S) ->
+    Event = fun({startDTD,Name,_,_}, _, _) ->
                     case Name of
-                        "book"        -> S#{man_type := none};
-                        "chapter"     -> S#{man_type := man6};
-                        "comref"      -> S#{man_type := none};
-                        "cref"        -> S#{man_type := none};
-                        "fascicules"  -> S#{man_type := none};
-                        "erlref"      -> S#{man_type := man3};
-                        "part"        -> S#{man_type := none};
-                        "application" -> S#{man_type := none}
+                        "chapter"     -> man6;
+                        "cref"        -> man3;
+                        "erlref"      -> man3;
+                        "comref"      -> man1;
+                        "application" -> none;
+                        "fascicules"  -> none;
+                        "part"        -> none;
+                        "book"        -> none
                     end;
                (_, _, S) ->
                     S
             end,
-    {ok, #{man_type := Type}, _} = xmerl_sax_parser:file(XmlFile, [skip_external_dtd,
-                                                                   {event_fun, Event},
-                                                                   {event_state,#{man_type => none}}]),
+    {ok, Type, _} = xmerl_sax_parser:file(XmlFile, [skip_external_dtd,
+                                                    {event_fun, Event},
+                                                    {event_state,none}]),
     Type.
 
 
