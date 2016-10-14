@@ -101,7 +101,7 @@ make_doc_otp(AppInfo, Resources) ->
     %% generate specs
     ?INFO("Generating specification-files", []),
     ErlFiles = filelib:wildcard("src/*.erl", Dir),
-    HrlFiles = filelib:wildcard("{include,src}/*.hrl", Dir),
+    HrlFiles = lists:usort([filename:dirname(Hrl) || Hrl <- filelib:wildcard("{include,src}/*.hrl", Dir)]),
     ?DBG(".erl-files to generate specifications: ~p", [ErlFiles]),
     foreach(fun (ErlFile) ->
                     edoc_specs_to_xml(ErlFile,HrlFiles,Ctx)
@@ -175,7 +175,6 @@ edoc_users_guide_to_xml(File, #{doc_src := DocSrc}) ->
     end.
 
 edoc_specs_to_xml(File, InclFs, #{doc_dst := DocDst}) ->
-    %Dir = "doc/specs",
     Dir = filename:join([DocDst,"specs"]),
     ReadOpts = [{includes, InclFs},
                 {preprocess, true}],
@@ -184,6 +183,7 @@ edoc_specs_to_xml(File, InclFs, #{doc_dst := DocDst}) ->
                   {layout, docgen_otp_specs}],
     try
         ?DBG("generate specifications for '~ts'", [File]),
+        ?DBG("reading edoc source with opts: ~p", [ReadOpts]),
         Fs = clauses(edoc:read_source(File, ReadOpts)),
         Doc = extract(File, Fs, ExtractOpts),
         Text = edoc:layout(Doc, LayoutOpts),
@@ -284,9 +284,7 @@ make_doc_html(#{name := Name, doc_dst := Target, erl_docgen := Docgen} = Ctx) ->
             filename:join([Priv, "xsl", "db_html.xsl"]),
             "doc/src/book.xml"],
     ?DBG("generating html-files to '~ts'", [OutDir]),
-    ?DBG("xsltproc ~p", [Args]),
-    {0,_} = rebar3_otpdoc_system:run("xsltproc", Args),
-    ok.
+    exec("xsltproc", Args).
 
 make_doc_man(ManFiles, #{name := Name, doc_dst := Target, erl_docgen := Docgen} = Ctx) ->
     ?INFO("Installing man-files", []),
@@ -314,10 +312,17 @@ make_doc_man(ManFiles, #{name := Name, doc_dst := Target, erl_docgen := Docgen} 
                     ok = filelib:ensure_dir(Dst),
                     Args = ["--output", Dst] ++ Args0 ++ [File],
                     ?DBG("generating man-page '~ts'", [Dst]),
-                    ?DBG("xsltproc ~p", [Args]),
-                    {0,_} = rebar3_otpdoc_system:run("xsltproc", Args)
+                    exec("xsltproc", Args)
             end, ManFiles),
     ok.
+
+exec(Program, Args) ->
+    ?DBG("executing '~ts' with ~p", [Program,Args]),
+    case rebar3_otpdoc_system:run("xsltproc", Args) of
+        {0,_} -> ok;
+        {_,Error} ->
+            ?ABORT("'~ts' failed with~n~ts~n", [Program,Error])
+    end.
 
 install_html_images(#{images := Files, doc_dst := Target, doc_src := DocSrc}) ->
     foreach(fun (File) ->
@@ -406,10 +411,16 @@ classify_man_page(XmlFile) ->
                (_, _, S) ->
                     S
             end,
-    {ok, Type, _} = xmerl_sax_parser:file(XmlFile, [skip_external_dtd,
-                                                    {event_fun, Event},
-                                                    {event_state,none}]),
-    Type.
+    case xmerl_sax_parser:file(XmlFile, [skip_external_dtd,
+                                        {event_fun, Event},
+                                        {event_state,none}]) of
+        {ok, Type, _} ->
+            Type;
+        {fatal_error, _, Error, _, _}=Fatal ->
+            ?DBG("xmerl_sax_parser returned with: ~p", [Fatal]),
+            ?WARN("Could not classify xml-file '~ts' - ~p", [XmlFile,Error]),
+            none
+    end.
 
 
 %% Ex. "October  6, 2016"
