@@ -1,4 +1,14 @@
 -module(rebar3_otpdoc_plugin_prv).
+%%
+%% useful rebar.config options
+%% {otpdoc_opts, [{doc_src, string()},           %% default: $APP/doc/src
+%%                {company, string()},           %% default: "Ericsson AB"
+%%                {edoc_modules, [atom()]},      %% default: []
+%%                {edoc_chapters, [string()]},   %% default: [], ex.: "doc/overview.edoc"
+%%                {images, [string()]}           %% default: $APP/doc/src/**.{gif,jpeg,jpg,png}
+%%               ]}.
+%%
+%%
 
 -import(lists, [foreach/2]).
 
@@ -6,6 +16,12 @@
 
 -define(PROVIDER, otpdoc).
 -define(DEPS, [app_discovery]).
+
+-define(INFO(Format,Args), rebar_api:info(Format,Args)).
+-define(DBG(Format,Args), rebar_api:debug(Format,Args)).
+-define(WARN(Format,Args), rebar_api:warn(Format,Args)).
+-define(ABORT(Format,Args), rebar_api:abort(Format,Args)).
+-define(CONSOLE(Format,Args), rebar_api:console(Format,Args)).
 
 %% ===================================================================
 %% Public API
@@ -40,25 +56,41 @@ format_error(Reason) ->
 make_doc_otp(AppInfo, Resources) ->
     Opts = rebar_app_info:opts(AppInfo),
     OtpOpts = proplists:unfold(rebar_opts:get(Opts, otpdoc_opts, [])),
+    ?DBG("otpdoc_opts: ~p", [OtpOpts]),
     OutDir = rebar_app_info:out_dir(AppInfo),
     DocSrc = filename:join([rebar_app_info:dir(AppInfo),"doc","src"]),
-    io:format("Opts: ~p~n", [OtpOpts]),
-    io:format("OutDir: ~p~n", [OutDir]),
+    Dir = rebar_app_info:dir(AppInfo),
+
+    %% set context
+    Ctx = #{name => rebar_app_info:name(AppInfo),
+            vsn => rebar_utils:vcs_vsn(rebar_app_info:original_vsn(AppInfo),
+                                       rebar_app_info:dir(AppInfo),
+                                       Resources),
+            app_dir => Dir,
+            company => proplists:get_value(company, OtpOpts, "Ericsson AB"),
+            doc_src => proplists:get_value(doc_src, OtpOpts, DocSrc),
+            doc_dst => filename:join([OutDir,"doc"]),
+            date => datestring(),
+            erl_docgen => code:lib_dir(erl_docgen)},
+    ?DBG("initial context: ~p", [Ctx]),
 
     %% convert edoc modules to xml-files
     EdocMods = proplists:get_value(edoc_modules, OtpOpts, []),
+    ?DBG("edoc module files: ~p", [EdocMods]),
     foreach(fun (Mod) ->
-                    edoc_module_to_xml(filename:join(["src",Mod])++".erl", [])
+                    edoc_module_to_xml(filename:join([Dir,"src",Mod])++".erl", Ctx)
             end, EdocMods),
 
     %% convert edoc chapters to xml-files
     EdocChapters = proplists:get_value(edoc_chapters, OtpOpts, []),
+    ?DBG("edoc chapter files: ~p", [EdocChapters]),
     foreach(fun (Chapter) ->
-                    edoc_users_guide_to_xml(Chapter,[])
+                    edoc_users_guide_to_xml(Chapter,Ctx)
             end, EdocChapters),
 
     %% convert .xmlsrc-files to include code examples
     XmlSrcFiles = filelib:wildcard(filename:join(DocSrc, "*.xmlsrc")),
+    ?DBG(".xmlsrc-files for code-line processing: ~p", [XmlSrcFiles]),
     foreach(fun (XmlSrcFile) ->
                     XmlDir = filename:dirname(XmlSrcFile),
                     Filename = filename:rootname(filename:basename(XmlSrcFile)),
@@ -67,26 +99,24 @@ make_doc_otp(AppInfo, Resources) ->
             end, XmlSrcFiles),
 
     %% generate specs
-    ErlFiles = filelib:wildcard("src/*.erl"),
-    HrlFiles = filelib:wildcard("{include,src}/*.hrl"),
-    io:format("erl-files: ~p~n", [ErlFiles]),
+    ?INFO("Generating specification-files", []),
+    ErlFiles = filelib:wildcard("src/*.erl", Dir),
+    HrlFiles = filelib:wildcard("{include,src}/*.hrl", Dir),
+    ?DBG(".erl-files to generate specifications: ~p", [ErlFiles]),
     foreach(fun (ErlFile) ->
-                    edoc_specs_to_xml(ErlFile,HrlFiles)
+                    edoc_specs_to_xml(ErlFile,HrlFiles,Ctx)
             end, ErlFiles),
 
     %% find defined man-pages
-    ManFiles = case proplists:get_value(manpages, OtpOpts) of
-                   undefined ->
-                       XmlFiles = filelib:wildcard(filename:join(DocSrc, "*.xml")),
-                       lists:foldl(fun(XmlFile, Acc) ->
-                                           case classify_man_page(XmlFile) of
-                                               none -> Acc;
-                                               Type -> [{Type,XmlFile}|Acc]
-                                           end
-                                   end, [], XmlFiles);
-                   XmlFiles ->
-                       XmlFiles
-               end,
+    XmlFiles = filelib:wildcard(filename:join(DocSrc, "*.xml")),
+    ?DBG(".xml-files to classify: ~p", [XmlFiles]),
+    ManFiles = lists:foldl(fun(XmlFile, Acc) ->
+                                   case classify_man_page(XmlFile) of
+                                       none -> Acc;
+                                       Type -> [{Type,XmlFile}|Acc]
+                                   end
+                           end, [], XmlFiles),
+    ?DBG("classified .xml-files to generate man-pages: ~p", [ManFiles]),
 
     %% find doc-images
     Images = case proplists:get_value(images, OtpOpts) of
@@ -95,46 +125,39 @@ make_doc_otp(AppInfo, Resources) ->
                  Imgs ->
                      Imgs
              end,
+    ?DBG("image-files for html-pages: ~p", [Images]),
 
-    %% set context
-    Ctx = #{ name => rebar_app_info:name(AppInfo),
-             vsn => rebar_utils:vcs_vsn(rebar_app_info:original_vsn(AppInfo),
-                                        rebar_app_info:dir(AppInfo),
-                                        Resources),
-             specs => filename:join([DocSrc,"specs.xml"]),
-             doc_src => DocSrc,
-             images => Images,
-             date => datestring(),
-             dir => OutDir,
-             erl_docgen => code:priv_dir(erl_docgen) },
+    %% set final context
+    Ctx1 = Ctx#{specs => filename:join([DocSrc,"specs.xml"]),
+                images => Images},
 
-    %% find xml-files
-    ok = make_doc_html(Ctx),
-    ok = make_doc_man(ManFiles, Ctx),
+    ?DBG("context for documentation generation: ~p", [Ctx1]),
+    ok = make_doc_html(Ctx1),
+    ok = make_doc_man(ManFiles, Ctx1),
     ok.
 
-edoc_module_to_xml(File,_Opts0) ->
+edoc_module_to_xml(File, #{doc_src := DocSrc}) ->
     case filelib:is_regular(File) of
 	true ->
+            ?DBG("convert edoc module '~ts' to xml target '~ts'", [File,DocSrc]),
 	    Opts = [{def,            []},
 		    {includes,       []},
 		    {preprocess,     false},
 		    {sort_functions, true},
 		    {app_default,    "OTPROOT"},
 		    {file_suffix,    ".xml"},
-		    {dir,            "doc/src"},
+		    {dir,            DocSrc},
 		    {layout,         docgen_edoc_xml_cb}],
 	    edoc:file(File, Opts);
 	false ->
-	    io:format("~s: not a regular file\n", [File]),
-            error
+	    ?ABORT("~s: not a regular file", [File])
     end.
 
-edoc_users_guide_to_xml(File,_Opts0) ->
+edoc_users_guide_to_xml(File, #{doc_src := DocSrc}) ->
     case filelib:is_regular(File) of
 	true ->
+            ?DBG("convert edoc chapter '~ts' to xml target '~ts'", [File,DocSrc]),
             Enc = epp:read_encoding(File, [{in_comment_only, false}]),
-            io:format("encoding: ~p~n", [Enc]),
             Encoding = [{encoding, Enc} || Enc =/= none],
 	    Opts = [{def,         []},
 		    {app_default, "OTPROOT"},
@@ -146,36 +169,34 @@ edoc_users_guide_to_xml(File,_Opts0) ->
 	    F = fun(M) -> M:overview(Data, Opts) end,
 	    Text = edoc_lib:run_layout(F, Opts),
 	    OutFile = "chapter.xml",
-	    edoc_lib:write_file(Text, "doc/src", OutFile, Encoding);
+	    edoc_lib:write_file(Text, DocSrc, OutFile, Encoding);
 	false ->
-	    io:format("~s: not a regular file\n", [File]),
-	    error
+	    ?ABORT("~ts: not a regular file", [File])
     end.
 
-edoc_specs_to_xml(File, InclFs) ->
-    Dir = "doc/specs",
-    ReadOpts = [{includes, InclFs}, {preprocess, true}],
+edoc_specs_to_xml(File, InclFs, #{doc_dst := DocDst}) ->
+    %Dir = "doc/specs",
+    Dir = filename:join([DocDst,"specs"]),
+    ReadOpts = [{includes, InclFs},
+                {preprocess, true}],
     ExtractOpts = [{report_missing_type, false}],
     LayoutOpts = [{pretty_printer, erl_pp},
                   {layout, docgen_otp_specs}],
     try
-        io:format("generate specs for ~ts (with ~p)~n", [File,InclFs]),
-        Fs = clauses(read_file(File, ReadOpts)),
+        ?DBG("generate specifications for '~ts'", [File]),
+        Fs = clauses(edoc:read_source(File, ReadOpts)),
         Doc = extract(File, Fs, ExtractOpts),
         Text = edoc:layout(Doc, LayoutOpts),
         ok = write_text(Text, File, Dir),
         rename(Dir, File)
     catch
         _:_ ->
-            io:format("EDoc could not process file '~s'\n", [File]),
-            clean_up(Dir)
+            clean_up(Dir),
+            ?ABORT("edoc could not process file '~ts'", [File])
     end.
 
-read_file(File, Opts) ->
-    edoc:read_source(File, Opts).
-
 extract(File, Forms, Opts) ->
-    Env = edoc_lib:get_doc_env([], [], _Opts=[]),
+    Env = edoc_lib:get_doc_env([], [], []),
     {_Module, Doc} = edoc_extract:source(Forms, File, Env, Opts),
     Doc.
 
@@ -209,7 +230,7 @@ write_text(Text, File, Dir) ->
             ok;
         {error, R} ->
             R1 = file:format_error(R),
-            io:format("could not write file '~s': ~s\n", [File, R1])
+            ?ABORT("could not write file '~ts': ~s", [File, R1])
     end.
 
 rename(Dir, F) ->
@@ -221,27 +242,35 @@ rename(Dir, F) ->
             ok;
         {error, R} ->
             R1 = file:format_error(R),
-            io:format("could not rename file '~s': ~s\n", [New, R1])
+            ?ABORT("could not rename file '~ts': ~s", [New, R1])
     end.
 
 clean_up(Dir) ->
-    _ = [file:delete(filename:join(Dir, F)) ||
-            F <- ["packages-frame.html",
-                  "overview-summary.html",
-                  "modules-frame.html",
-                  "index.html", "erlang.png", "edoc-info"]],
+    ?DBG("cleaning up directory '~ts'", [Dir]),
+    Files = ["packages-frame.html",
+             "overview-summary.html",
+             "modules-frame.html",
+             "index.html", "erlang.png", "edoc-info"],
+    foreach(fun(F) ->
+                    File = filename:join(Dir, F),
+                    ?DBG("deleting file '~ts'", [File]),
+                    ok = file:delete(File)
+            end, Files),
     ok.
-make_doc_html(#{name := Name, erl_docgen := Priv} = Ctx) ->
+
+make_doc_html(#{name := Name, doc_dst := Target, erl_docgen := Docgen} = Ctx) ->
+    ?INFO("Installing html-files", []),
     ok = install_html_boilerplate(Ctx),
     ok = install_html_images(Ctx),
+    Priv = filename:join([Docgen,"priv"]),
+    OutDir = filename:join([Target,"html"]),
     Args = ["--noout",
-            "--stringparam", "outdir", "doc/html",
-            "--stringparam", "docgen", "/ldisk/egil/git/otp/lib/erl_docgen",
+            "--stringparam", "outdir", OutDir,
+            "--stringparam", "docgen", Docgen,
             "--stringparam", "topdocdir", "doc",
-            "--stringparam", "pdfdir", "doc/pdf",
+            "--stringparam", "pdfdir", filename:join([Target,"pdf"]), %% why?
             "--xinclude",
             "--stringparam", "specs_file", maps:get(specs, Ctx),
-
             "--stringparam", "gendate", maps:get(date, Ctx),
             "--stringparam", "appname", Name,
             "--stringparam", "appver", maps:get(vsn, Ctx),
@@ -254,13 +283,16 @@ make_doc_html(#{name := Name, erl_docgen := Priv} = Ctx) ->
             "-path", filename:join([Priv, "dtd_html_entities"]),
             filename:join([Priv, "xsl", "db_html.xsl"]),
             "doc/src/book.xml"],
-    io:format("xsltproc ~p~n", [Args]),
+    ?DBG("generating html-files to '~ts'", [OutDir]),
+    ?DBG("xsltproc ~p", [Args]),
     {0,_} = rebar3_otpdoc_system:run("xsltproc", Args),
     ok.
 
-make_doc_man(ManFiles, #{name := Name, erl_docgen := Priv} = Ctx) ->
-    Args0 = ["--stringparam", "company", "Ericsson AB",
-             "--stringparam", "docgen", Priv,
+make_doc_man(ManFiles, #{name := Name, doc_dst := Target, erl_docgen := Docgen} = Ctx) ->
+    ?INFO("Installing man-files", []),
+    Priv = filename:join([Docgen,"priv"]),
+    Args0 = ["--stringparam", "company", maps:get(company, Ctx),
+             "--stringparam", "docgen", Docgen,
              "--stringparam", "gendate", maps:get(date, Ctx),
              "--stringparam", "appname", Name,
              "--stringparam", "appver", maps:get(vsn, Ctx),
@@ -278,20 +310,24 @@ make_doc_man(ManFiles, #{name := Name, erl_docgen := Priv} = Ctx) ->
               end,
 
     foreach(fun ({_,File}=MF) ->
-                    Args = ["--output", filename:join(["doc", ManFile(MF)])] ++ Args0 ++ [File],
+                    Dst = filename:join([Target, ManFile(MF)]),
+                    ok = filelib:ensure_dir(Dst),
+                    Args = ["--output", Dst] ++ Args0 ++ [File],
+                    ?DBG("generating man-page '~ts'", [Dst]),
+                    ?DBG("xsltproc ~p", [Args]),
                     {0,_} = rebar3_otpdoc_system:run("xsltproc", Args)
             end, ManFiles),
     ok.
 
-install_html_images(#{images := Files, doc_src := DocSrc}) ->
+install_html_images(#{images := Files, doc_dst := Target, doc_src := DocSrc}) ->
     foreach(fun (File) ->
                     Src = filename:join(DocSrc, File),
-                    Dst = filename:join(["doc/html", File]),
+                    Dst = filename:join([Target,"html",File]),
                     ok = install_file(Src, Dst)
             end, Files),
     ok.
 
-install_html_boilerplate(#{erl_docgen := Path}) ->
+install_html_boilerplate(#{erl_docgen := Path, doc_dst := Target}) ->
     Files = ["js/flipmenu/flipmenu.js",
              "js/flipmenu/flip_closed.gif",
              "js/flipmenu/flip_open.gif",
@@ -299,15 +335,15 @@ install_html_boilerplate(#{erl_docgen := Path}) ->
              "css/otp_doc.css",
              "images/erlang-logo.png"],
     foreach(fun (File) ->
-                    Src = filename:join(Path,File),
-                    Dst = filename:join(["doc/html/doc",File]),
+                    Src = filename:join([Path,"priv",File]),
+                    Dst = filename:join([Target,"html/doc",File]),
                     ok = install_file(Src, Dst)
             end, Files),
     ok.
 
 install_file(Src, Dst) ->
     ok = filelib:ensure_dir(Dst),
-    io:format("copy: ~ts -> ~ts~n", [Src,Dst]),
+    ?DBG("installing file '~ts' from '~ts'", [Dst,Src]),
     {ok,_} = file:copy(Src, Dst),
     ok.
 
@@ -356,7 +392,6 @@ xml_codeline_get_code(File, Tag) ->
 %% "some/xml-file.xml" -> man1 | man3 | man6 | none
 classify_man_page(XmlFile) ->
     Event = fun({startDTD,Name,_,_}, _, _) ->
-                    io:format("name: ~p~n", [Name]),
                     case Name of
                         "chapter"     -> man6;
                         "cref"        -> man3;
