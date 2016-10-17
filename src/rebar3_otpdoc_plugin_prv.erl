@@ -174,8 +174,8 @@ edoc_users_guide_to_xml(File, #{doc_src := DocSrc}) ->
 	    ?ABORT("~ts: not a regular file", [File])
     end.
 
-edoc_specs_to_xml(File, InclFs, #{doc_dst := DocDst}) ->
-    Dir = filename:join([DocDst,"specs"]),
+edoc_specs_to_xml(File, InclFs, #{doc_src := DocSrc}) ->
+    Dir = doc_src_to_specs(DocSrc),
     ReadOpts = [{includes, InclFs},
                 {preprocess, true}],
     ExtractOpts = [{report_missing_type, false}],
@@ -194,6 +194,10 @@ edoc_specs_to_xml(File, InclFs, #{doc_dst := DocDst}) ->
             clean_up(Dir),
             ?ABORT("edoc could not process file '~ts'", [File])
     end.
+
+doc_src_to_specs(DocSrc) ->
+    [_|Paths] = lists:reverse(filename:split(DocSrc)),
+    filename:join(lists:reverse(["specs"|Paths])).
 
 extract(File, Forms, Opts) ->
     Env = edoc_lib:get_doc_env([], [], []),
@@ -225,6 +229,7 @@ write_text(Text, File, Dir) ->
     Base = filename:basename(File, ".erl"),
     OutFile = filename:join(Dir, Base) ++ ".specs",
     ok = filelib:ensure_dir(OutFile),
+    ?DBG("writing specifications to '~ts'", [OutFile]),
     case file:write_file(OutFile, Text) of
         ok ->
             ok;
