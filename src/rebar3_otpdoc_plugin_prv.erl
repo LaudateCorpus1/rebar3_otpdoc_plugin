@@ -88,13 +88,21 @@ make_doc_otp(AppInfo, Resources) ->
                     edoc_users_guide_to_xml(Chapter,Ctx)
             end, EdocChapters),
 
+    %% convert .md-files to xml-files
+    MdFiles = filelib:wildcard(filename:join(DocSrc, "*.md")),
+    ?DBG(".md-files: ~p", [MdFiles]),
+    foreach(fun (MdFile) ->
+                    Filename = filename:rootname(filename:basename(MdFile)),
+                    XmlFileOut = filename:join([DocSrc,Filename ++ ".xml"]),
+                    rebar3_otpdoc_md_to_xml:translate(MdFile, XmlFileOut)
+            end, MdFiles),
+
     %% convert .xmlsrc-files to include code examples
     XmlSrcFiles = filelib:wildcard(filename:join(DocSrc, "*.xmlsrc")),
     ?DBG(".xmlsrc-files for code-line processing: ~p", [XmlSrcFiles]),
     foreach(fun (XmlSrcFile) ->
-                    XmlDir = filename:dirname(XmlSrcFile),
                     Filename = filename:rootname(filename:basename(XmlSrcFile)),
-                    XmlFileOut = filename:join([XmlDir,Filename]) ++ ".xml",
+                    XmlFileOut = filename:join([DocSrc,Filename ++ ".xml"]),
                     ok = xml_codeline_preprocessing(XmlSrcFile, XmlFileOut)
             end, XmlSrcFiles),
 
