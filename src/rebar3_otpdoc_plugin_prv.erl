@@ -315,7 +315,9 @@ make_doc_man(ManFiles, #{name := Name, doc_dst := Target, erl_docgen := Docgen} 
     ManFile = fun ({Type, File}) ->
                        RootBase = filename:rootname(filename:basename(File)),
                        case Type of
+                           man1 -> filename:join(["man1", RootBase ++ ".1"]);
                            man3 -> filename:join(["man3", RootBase ++ ".3"]);
+                           man4 -> filename:join(["man4", RootBase ++ ".4"]);
                            man6 -> filename:join(["man6", RootBase ++ ".6"])
                        end
               end,
@@ -407,17 +409,20 @@ xml_codeline_get_code(File, Tag) ->
                                 [global, multiline, {capture, [1], binary}]),
     Match.
 
-%% "some/xml-file.xml" -> man1 | man3 | man6 | none
+%% "some/xml-file.xml" -> man1 | man3 | man4 | man6 | none
 classify_man_page(XmlFile) ->
     Event = fun({startDTD,Name,_,_}, _, _) ->
                     case Name of
-                        "chapter"     -> man6;
+                        "comref"      -> man1;
                         "cref"        -> man3;
                         "erlref"      -> man3;
-                        "comref"      -> man1;
-                        "appref"      -> none; %% ?
+                        "fileref"     -> man4;
+                        "appref"      -> man6;
+                        "chapter"     -> none;
                         "application" -> none;
-                        "fascicules"  -> none;
+                        "fascicules"  ->
+                            ?WARN("This xml-file is deprecated and should be removed: '~ts'", [XmlFile]),
+                            none;
                         "part"        -> none;
                         "book"        -> none
                     end;
