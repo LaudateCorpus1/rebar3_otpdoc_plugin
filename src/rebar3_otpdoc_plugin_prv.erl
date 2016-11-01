@@ -88,8 +88,8 @@ make_doc_otp(AppInfo, Resources) ->
                     edoc_users_guide_to_xml(Chapter,Ctx)
             end, EdocChapters),
 
-    %% convert .md-files to xml-files
-    MdFiles = filelib:wildcard(filename:join(DocSrc, "*.md")),
+    %% convert markdown .md-files to xml-files
+    MdFiles = filelib:wildcard(filename:join(DocSrc, "*.{md,markdown}")),
     ?DBG(".md-files: ~p", [MdFiles]),
     foreach(fun (MdFile) ->
                     Filename = filename:rootname(filename:basename(MdFile)),
