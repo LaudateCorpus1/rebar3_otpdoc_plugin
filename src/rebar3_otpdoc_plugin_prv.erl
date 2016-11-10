@@ -388,12 +388,13 @@ xml_codeline_parse(InDev, OutDev, Path, Mp) ->
         String ->
             case re:run(String, Mp,[{capture, [1,2], list}]) of
                 {match,[File, []]} ->
-                    {ok,Bin} = file:read_file(filename:join(Path, File)),
+                    Bin = read_example_or_abort(filename:join(Path, File)),
                     file:write(OutDev, "<code>\n<![CDATA[\n"),
                     file:write(OutDev, Bin),
                     file:write(OutDev, "]]></code>");
                 {match,[File, Tag]} ->
-                    String2 = xml_codeline_get_code(filename:join(Path, File), Tag),
+                    Bin = read_example_or_abort(filename:join(Path, File)),
+                    String2 = xml_codeline_get_code(Bin, Tag),
                     file:write(OutDev, "<code>\n<![CDATA[\n"),
                     file:write(OutDev, String2),
                     file:write(OutDev, "]]></code>");
@@ -403,8 +404,14 @@ xml_codeline_parse(InDev, OutDev, Path, Mp) ->
             xml_codeline_parse(InDev, OutDev, Path, Mp)
     end.
 
-xml_codeline_get_code(File, Tag) ->
-    {ok,Bin} = file:read_file(File),
+read_example_or_abort(File) ->
+    case file:read_file(File) of
+        {ok,Bin} -> Bin;
+        {error, enoent} ->
+            ?ABORT("Could not find code-file to include: ~ts", [File])
+    end.
+
+xml_codeline_get_code(Bin, Tag) ->
     {match, [[Match]]} = re:run(Bin,"^" ++ Tag ++ "\n((.|\n)*)\n" ++ Tag ++ "\$",
                                 [global, multiline, {capture, [1], binary}]),
     Match.
