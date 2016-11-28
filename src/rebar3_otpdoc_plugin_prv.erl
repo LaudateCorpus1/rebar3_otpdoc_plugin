@@ -14,8 +14,9 @@
 
 -export([init/1, do/1, format_error/1]).
 
--define(PROVIDER, otpdoc).
--define(DEPS, [app_discovery]).
+-define(NAMESPACE, otp).
+-define(PROVIDER, doc).
+-define(DEPS, [{default,app_discovery}]).
 
 -define(INFO(Format,Args), rebar_api:info(Format,Args)).
 -define(DBG(Format,Args), rebar_api:debug(Format,Args)).
@@ -31,9 +32,10 @@ init(State) ->
     Provider = providers:create([
             {name, ?PROVIDER},            % The 'user friendly' name of the task
             {module, ?MODULE},            % The module implementation of the task
+            {namespace, ?NAMESPACE},      % OTP
             {bare, true},                 % The task can be run by the user, always true
             {deps, ?DEPS},                % The list of dependencies
-            {example, "rebar3 otpdoc"},   % How to use the plugin
+            {example, "rebar3 otp doc"},  % How to use the plugin
             {opts, []},                   % list of options understood by the plugin
             {short_desc, "A rebar3 plugin for building OTP documentation"},
             {desc, "A rebar3 plugin for building OTP documentation"}
