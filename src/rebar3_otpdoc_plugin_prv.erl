@@ -45,8 +45,8 @@ init(State) ->
     {ok, rebar_state:add_provider(State, Provider)}.
 
 help(target) ->
-    "Directory where the documentation shall be installed."
-    "Both man pages and html documentation.";
+    "Directory where the documentation shall be installed. "
+    "Both man pages and html documentation are installed, using 'man' and 'html' path prefix respectively.";
 help(man_target) ->
     "Directory where the man pages shall be installed.";
 help(html_target) ->
@@ -83,8 +83,8 @@ make_doc_otp(AppInfo, Resources, CliOpts) ->
             app_dir => Dir,
             company => proplists:get_value(company, OtpOpts, "Ericsson AB"),
             doc_src => proplists:get_value(doc_src, OtpOpts, DocSrc),
-            man_target => proplists:get_value(man_target, CliOpts, DefaultTarget),
-            html_target => proplists:get_value(html_target, CliOpts, DefaultTarget),
+            man_target => proplists:get_value(man_target, CliOpts, filename:join(DefaultTarget,"man")),
+            html_target => proplists:get_value(html_target, CliOpts, filename:join(DefaultTarget,"html")),
             date => datestring(),
             erl_docgen => code:lib_dir(erl_docgen)},
 
@@ -291,10 +291,9 @@ make_doc_html(#{name := Name, html_target := Target, erl_docgen := Docgen} = Ctx
     ?INFO("Installing html-files", []),
     ok = install_html_boilerplate(Ctx),
     ok = install_html_images(Ctx),
-    Priv = filename:join([Docgen,"priv"]),
-    OutDir = filename:join([Target,"html"]),
+    Priv = filename:join([Docgen, "priv"]),
     Args = ["--noout",
-            "--stringparam", "outdir", OutDir,
+            "--stringparam", "outdir", Target,
             "--stringparam", "docgen", Docgen,
             "--stringparam", "topdocdir", "doc",
             "--stringparam", "pdfdir", filename:join([Target,"pdf"]), %% why?
@@ -312,7 +311,7 @@ make_doc_html(#{name := Name, html_target := Target, erl_docgen := Docgen} = Ctx
             "-path", filename:join([Priv, "dtd_html_entities"]),
             filename:join([Priv, "xsl", "db_html.xsl"]),
             "doc/src/book.xml"],
-    ?DBG("generating html-files to '~ts'", [OutDir]),
+    ?DBG("generating html-files to '~ts'", [Target]),
     exec("xsltproc", Args).
 
 make_doc_man(ManFiles, #{name := Name, man_target := Target, erl_docgen := Docgen} = Ctx) ->
@@ -358,7 +357,7 @@ exec(Program, Args) ->
 install_html_images(#{images := Files, html_target := Target, doc_src := DocSrc}) ->
     foreach(fun (File) ->
                     Src = filename:join(DocSrc, File),
-                    Dst = filename:join([Target,"html",File]),
+                    Dst = filename:join([Target,File]),
                     ok = install_file(Src, Dst)
             end, Files),
     ok.
@@ -372,7 +371,7 @@ install_html_boilerplate(#{erl_docgen := Path, html_target := Target}) ->
              "images/erlang-logo.png"],
     foreach(fun (File) ->
                     Src = filename:join([Path,"priv",File]),
-                    Dst = filename:join([Target,"html/doc",File]),
+                    Dst = filename:join([Target,"doc",File]),
                     ok = install_file(Src, Dst)
             end, Files),
     ok.
