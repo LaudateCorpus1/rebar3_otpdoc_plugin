@@ -36,17 +36,20 @@ init(State) ->
             {bare, true},                 % The task can be run by the user, always true
             {deps, ?DEPS},                % The list of dependencies
             {example, "rebar3 otp doc"},  % How to use the plugin
-            {opts, []},                   % list of options understood by the plugin
+            {opts, [{target,$o,"target",string,help(target)}]},
             {short_desc, "A rebar3 plugin for building OTP documentation"},
             {desc, "A rebar3 plugin for building OTP documentation"}
     ]),
     {ok, rebar_state:add_provider(State, Provider)}.
 
+help(target) ->
+    "Directory where the documentation shall be installed.".
 
 -spec do(rebar_state:t()) -> {ok, rebar_state:t()} | {error, string()}.
 do(State) ->
+    {CliOpts,_} = rebar_state:command_parsed_args(State),
     foreach(fun(AppInfo) ->
-                    make_doc_otp(AppInfo, rebar_state:resources(State))
+                    make_doc_otp(AppInfo, rebar_state:resources(State), CliOpts)
             end, rebar_state:project_apps(State)),
     {ok, State}.
 
@@ -55,9 +58,10 @@ format_error(Reason) ->
     io_lib:format("~p", [Reason]).
 
 %%%-----------------------------------------------------------------
-make_doc_otp(AppInfo, Resources) ->
+make_doc_otp(AppInfo, Resources, CliOpts) ->
     Opts = rebar_app_info:opts(AppInfo),
     OtpOpts = proplists:unfold(rebar_opts:get(Opts, otpdoc_opts, [])),
+    ?DBG("opts: ~p", [CliOpts]),
     ?DBG("otpdoc_opts: ~p", [OtpOpts]),
     OutDir = rebar_app_info:out_dir(AppInfo),
     DocSrc = filename:join([rebar_app_info:dir(AppInfo),"doc","src"]),
@@ -71,7 +75,7 @@ make_doc_otp(AppInfo, Resources) ->
             app_dir => Dir,
             company => proplists:get_value(company, OtpOpts, "Ericsson AB"),
             doc_src => proplists:get_value(doc_src, OtpOpts, DocSrc),
-            doc_dst => filename:join([OutDir,"doc"]),
+            doc_dst => proplists:get_value(target,  CliOpts, filename:join([OutDir,"doc"])),
             date => datestring(),
             erl_docgen => code:lib_dir(erl_docgen)},
     ?DBG("initial context: ~p", [Ctx]),
