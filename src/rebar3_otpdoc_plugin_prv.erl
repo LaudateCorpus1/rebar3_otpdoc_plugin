@@ -36,14 +36,21 @@ init(State) ->
             {bare, true},                 % The task can be run by the user, always true
             {deps, ?DEPS},                % The list of dependencies
             {example, "rebar3 otp doc"},  % How to use the plugin
-            {opts, [{target,$o,"target",string,help(target)}]},
+            {opts, [{target,$o,"target",string,help(target)},
+                    {html_target,$t,"html_target",string,help(html_target)},
+                    {man_target,$m,"man_target",string,help(man_target)}]},
             {short_desc, "A rebar3 plugin for building OTP documentation"},
             {desc, "A rebar3 plugin for building OTP documentation"}
     ]),
     {ok, rebar_state:add_provider(State, Provider)}.
 
 help(target) ->
-    "Directory where the documentation shall be installed.".
+    "Directory where the documentation shall be installed."
+    "Both man pages and html documentation.";
+help(man_target) ->
+    "Directory where the man pages shall be installed.";
+help(html_target) ->
+    "Directory where the html documentation shall be installed.".
 
 -spec do(rebar_state:t()) -> {ok, rebar_state:t()} | {error, string()}.
 do(State) ->
@@ -66,6 +73,7 @@ make_doc_otp(AppInfo, Resources, CliOpts) ->
     OutDir = rebar_app_info:out_dir(AppInfo),
     DocSrc = filename:join([rebar_app_info:dir(AppInfo),"doc","src"]),
     Dir = rebar_app_info:dir(AppInfo),
+    DefaultTarget = proplists:get_value(target, CliOpts, filename:join([OutDir,"doc"])),
 
     %% set context
     Ctx = #{name => rebar_app_info:name(AppInfo),
@@ -75,9 +83,11 @@ make_doc_otp(AppInfo, Resources, CliOpts) ->
             app_dir => Dir,
             company => proplists:get_value(company, OtpOpts, "Ericsson AB"),
             doc_src => proplists:get_value(doc_src, OtpOpts, DocSrc),
-            doc_dst => proplists:get_value(target,  CliOpts, filename:join([OutDir,"doc"])),
+            man_target => proplists:get_value(man_target, CliOpts, DefaultTarget),
+            html_target => proplists:get_value(html_target, CliOpts, DefaultTarget),
             date => datestring(),
             erl_docgen => code:lib_dir(erl_docgen)},
+
     ?DBG("initial context: ~p", [Ctx]),
 
     %% convert edoc modules to xml-files
@@ -277,7 +287,7 @@ clean_up(Dir) ->
             end, Files),
     ok.
 
-make_doc_html(#{name := Name, doc_dst := Target, erl_docgen := Docgen} = Ctx) ->
+make_doc_html(#{name := Name, html_target := Target, erl_docgen := Docgen} = Ctx) ->
     ?INFO("Installing html-files", []),
     ok = install_html_boilerplate(Ctx),
     ok = install_html_images(Ctx),
@@ -305,7 +315,7 @@ make_doc_html(#{name := Name, doc_dst := Target, erl_docgen := Docgen} = Ctx) ->
     ?DBG("generating html-files to '~ts'", [OutDir]),
     exec("xsltproc", Args).
 
-make_doc_man(ManFiles, #{name := Name, doc_dst := Target, erl_docgen := Docgen} = Ctx) ->
+make_doc_man(ManFiles, #{name := Name, man_target := Target, erl_docgen := Docgen} = Ctx) ->
     ?INFO("Installing man-files", []),
     Priv = filename:join([Docgen,"priv"]),
     Args0 = ["--stringparam", "company", maps:get(company, Ctx),
@@ -345,7 +355,7 @@ exec(Program, Args) ->
             ?ABORT("'~ts' failed with~n~ts~n", [Program,Error])
     end.
 
-install_html_images(#{images := Files, doc_dst := Target, doc_src := DocSrc}) ->
+install_html_images(#{images := Files, html_target := Target, doc_src := DocSrc}) ->
     foreach(fun (File) ->
                     Src = filename:join(DocSrc, File),
                     Dst = filename:join([Target,"html",File]),
@@ -353,7 +363,7 @@ install_html_images(#{images := Files, doc_dst := Target, doc_src := DocSrc}) ->
             end, Files),
     ok.
 
-install_html_boilerplate(#{erl_docgen := Path, doc_dst := Target}) ->
+install_html_boilerplate(#{erl_docgen := Path, html_target := Target}) ->
     Files = ["js/flipmenu/flipmenu.js",
              "js/flipmenu/flip_closed.gif",
              "js/flipmenu/flip_open.gif",
